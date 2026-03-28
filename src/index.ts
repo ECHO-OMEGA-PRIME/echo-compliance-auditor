@@ -18,6 +18,7 @@ interface Env {
   SERVICE_REGISTRY: Fetcher;
   WORKER_VERSION: string;
   WORKER_NAME: string;
+  ECHO_API_KEY: string;
 }
 
 interface AuditPolicy {
@@ -139,9 +140,10 @@ function errorResponse(message: string, status: number, details?: unknown): Resp
 
 // ─── Auth Middleware ─────────────────────────────────────────────────────────
 
-function requireAuth(c: { req: { header: (name: string) => string | undefined } }): boolean {
+function requireAuth(c: { req: { header: (name: string) => string | undefined }; env: Env }): boolean {
+  if (!c.env.ECHO_API_KEY) return false;
   const key = c.req.header('X-Echo-API-Key');
-  return key === 'echo-omega-prime-forge-x-2026';
+  return key === c.env.ECHO_API_KEY;
 }
 
 // ─── Default Policies ────────────────────────────────────────────────────────
@@ -337,7 +339,8 @@ interface CheckResult {
 async function runHttpProbeCheck(
   serviceUrl: string,
   serviceName: string,
-  policy: AuditPolicy
+  policy: AuditPolicy,
+  env: Env
 ): Promise<CheckResult> {
   const config = JSON.parse(policy.check_config) as {
     method: string;
@@ -352,7 +355,7 @@ async function runHttpProbeCheck(
   const url = `${serviceUrl}${config.path}`;
   const headers: Record<string, string> = {};
   if (!config.without_key) {
-    headers['X-Echo-API-Key'] = 'echo-omega-prime-forge-x-2026';
+    headers['X-Echo-API-Key'] = env.ECHO_API_KEY;
   }
 
   try {
@@ -490,11 +493,12 @@ async function runConfigCheck(
 async function runPolicyCheck(
   serviceUrl: string,
   serviceName: string,
-  policy: AuditPolicy
+  policy: AuditPolicy,
+  env: Env
 ): Promise<CheckResult> {
   switch (policy.check_type) {
     case 'http_probe':
-      return runHttpProbeCheck(serviceUrl, serviceName, policy);
+      return runHttpProbeCheck(serviceUrl, serviceName, policy, env);
     case 'code_pattern':
       return runCodePatternCheck(serviceUrl, serviceName, policy);
     case 'config_check':
@@ -513,6 +517,7 @@ async function runPolicyCheck(
 async function executeAuditRun(
   db: D1Database,
   cache: KVNamespace,
+  env: Env,
   runType: AuditRun['run_type'],
   targetServices?: string[]
 ): Promise<{ runId: string; violations: number; servicesChecked: number }> {
@@ -581,7 +586,7 @@ async function executeAuditRun(
       }
 
       totalChecks++;
-      const result = await runPolicyCheck(service.url, service.name, policy);
+      const result = await runPolicyCheck(service.url, service.name, policy, env);
 
       if (result.passed) {
         passedChecks++;
@@ -609,7 +614,7 @@ async function executeAuditRun(
     // Record informational entries for code/config checks
     for (const policy of otherPolicies) {
       totalChecks++;
-      const result = await runPolicyCheck(service.url, service.name, policy);
+      const result = await runPolicyCheck(service.url, service.name, policy, env);
       // Code pattern and config checks are informational
       passedChecks++;
       const categoryScores = policy.category === 'security' ? scores.security :
@@ -835,7 +840,7 @@ app.post('/audit/run', async (c) => {
   const runType: AuditRun['run_type'] = targetServices ? 'targeted' : 'manual';
 
   try {
-    const result = await executeAuditRun(c.env.DB, c.env.CACHE, runType, targetServices);
+    const result = await executeAuditRun(c.env.DB, c.env.CACHE, c.env, runType, targetServices);
     return c.json({
       ok: true,
       run_id: result.runId,
@@ -1210,7 +1215,7 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
   if (cron === '0 4 * * *') {
     // Daily full audit at 4 AM
     try {
-      const result = await executeAuditRun(env.DB, env.CACHE, 'scheduled');
+      const result = await executeAuditRun(env.DB, env.CACHE, env, 'scheduled');
       log('info', 'Daily audit completed', {
         runId: result.runId,
         violations: result.violations,
@@ -1229,7 +1234,7 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
-                'X-Echo-API-Key': 'echo-omega-prime-forge-x-2026',
+                'X-Echo-API-Key': env.ECHO_API_KEY,
               },
               body: JSON.stringify({
                 source: WORKER_NAME,
@@ -1295,7 +1300,7 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'X-Echo-API-Key': 'echo-omega-prime-forge-x-2026',
+            'X-Echo-API-Key': env.ECHO_API_KEY,
           },
           body: JSON.stringify({
             role: 'system',

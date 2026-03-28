@@ -33,3 +33,7 @@ crons = ["0 4 * * *", "0 0 * * 1"]
 [vars]
 WORKER_VERSION = "1.0.0"
 WORKER_NAME = "echo-compliance-auditor"
+
+[[analytics_engine_datasets]]
+binding = "ANALYTICS"
+dataset = "echo_metrics"
