@@ -691,6 +691,8 @@ app.use('*', async (c, next) => {
 
 // ─── 1. GET /health ──────────────────────────────────────────────────────────
 
+app.get("/", (c) => c.json({ service: 'echo-compliance-auditor', status: 'operational' }));
+
 app.get('/health', async (c) => {
   let dbOk = false;
   try {
